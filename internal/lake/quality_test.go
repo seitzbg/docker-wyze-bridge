@@ -169,3 +169,26 @@ func TestQualityGuardRejectsReplacedSessionAndWarmup(t *testing.T) {
 		t.Fatal("stale session received command")
 	}
 }
+
+func TestQualityPolicyTargetFollowsQualityLabel(t *testing.T) {
+	if r := NativeResolution("2k"); r != (Resolution{Width: 3840, Height: 2160}) {
+		t.Fatalf("2k target %+v", r)
+	}
+	p := qualityPolicy{target: NativeResolution("2.5k")}
+	now := time.Now()
+	if event, retry := p.observe(now, Resolution{Width: 2560, Height: 1440}, nil); event != "" || retry {
+		t.Fatalf("2560x1440 counted as a drop for a 2.5k session: %s/%t", event, retry)
+	}
+	p.observe(now.Add(time.Minute), Resolution{Width: 1920, Height: 1080}, nil)
+	if event, retry := p.observe(now.Add(2*time.Minute), Resolution{Width: 1920, Height: 1080}, nil); event != "quality_low" || !retry {
+		t.Fatalf("1920x1080 not treated as a drop for a 2.5k session: %s/%t", event, retry)
+	}
+	if event, _ := p.observe(now.Add(3*time.Minute), Resolution{Width: 2560, Height: 1440}, nil); event != "quality_recovered" {
+		t.Fatalf("2560x1440 did not recover a 2.5k session: %s", event)
+	}
+	var zero qualityPolicy
+	zero.observe(now, Resolution{Width: 2560, Height: 1440}, nil)
+	if event, _ := zero.observe(now.Add(time.Minute), Resolution{Width: 2560, Height: 1440}, nil); event != "quality_low" {
+		t.Fatalf("2560x1440 should be a drop for the default 4K target: %s", event)
+	}
+}
