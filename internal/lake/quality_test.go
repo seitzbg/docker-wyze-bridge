@@ -48,7 +48,25 @@ func TestQualityPolicySustainedDropCooldownAndBudget(t *testing.T) {
 	check(70, low, nil, "", true) // only expired attempts replenish the budget
 }
 
+func TestQualityGuardStartsForNativeLabels(t *testing.T) {
+	for label, want := range map[string]bool{"2k": true, "2.5k": true, "360p": false} {
+		if guardsQuality(label) != want {
+			t.Fatalf("guardsQuality(%q) = %t", label, !want)
+		}
+	}
+}
+
 func TestQualityRetryUsesExistingGatewayWithoutReplacingSession(t *testing.T) {
+	testQualityRetry(t, "2k", Resolution{640, 360})
+}
+
+// A 2.5k session re-requests its own label once samples fall below 2560x1440.
+func TestQualityRetryRequestsTheSessionLabel(t *testing.T) {
+	testQualityRetry(t, "2.5k", Resolution{1920, 1080})
+}
+
+func testQualityRetry(t *testing.T, quality string, low Resolution) {
+	t.Helper()
 	writes := make(chan message, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		peer, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
@@ -69,12 +87,12 @@ func TestQualityRetryUsesExistingGatewayWithoutReplacingSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Session{conn: conn, stopped: make(chan struct{}), events: make(chan Event, 32), initial: &wyzeapi.LakeSession{UserID: "test-user"}, quality: "2k", started: time.Now()}
+	s := &Session{conn: conn, stopped: make(chan struct{}), events: make(chan Event, 32), initial: &wyzeapi.LakeSession{UserID: "test-user"}, quality: quality, started: time.Now()}
 	defer s.Close()
 	b, op := qualityTestBroker(s)
 	defer b.cancel()
 	var calls atomic.Int32
-	b.ProbeQuality = func(context.Context, string) (Resolution, error) { calls.Add(1); return Resolution{640, 360}, nil }
+	b.ProbeQuality = func(context.Context, string) (Resolution, error) { calls.Add(1); return low, nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
@@ -85,7 +103,7 @@ func TestQualityRetryUsesExistingGatewayWithoutReplacingSession(t *testing.T) {
 			t.Fatal("retry sent before confirmed low samples")
 		}
 		payload, err := base64.StdEncoding.DecodeString(str(m.Body["payload"]))
-		if err != nil || !strings.Contains(string(payload), `"camera::resolution":"2k"`) {
+		if err != nil || !strings.Contains(string(payload), `"camera::resolution":"`+quality+`"`) {
 			t.Fatal("missing high-quality property")
 		}
 	case <-time.After(time.Second):

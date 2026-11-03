@@ -23,6 +23,12 @@ type qualityPolicy struct {
 	low, exhausted bool
 }
 
+// guardsQuality reports whether a session asks for the camera's native
+// resolution and so gets the quality guard; a "360p" session wants the drop.
+func guardsQuality(quality string) bool {
+	return quality == "2k" || quality == "2.5k"
+}
+
 // NativeResolution is the decoded size a camera sends once its quality label
 // has taken effect: "2k" is the Pan v4's 3840x2160, "2.5k" the Bulb Cam Pan's
 // 2560x1440. Anything smaller counts as a drop.
